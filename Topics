@@ -1,0 +1,26 @@
+Examples: Nistara, Matt Espe's March 7 email from Hannah Waterhouse.
+
+
+
+system.time() 
+microbenchmark package
+
+Vectorization is key.
+  Why - hit C code.
+
+ vectorization in rnorm(), rbinom() in the parameters.
+
+
+Pre-allocation
+
+Profiling
+  lapply issue.
+Counting calls
+
+Calling C
+  .C/.Call
+  C-level API to R 
+  Rcpp
+  inline
+  Rffi, rdyncall
+ 
