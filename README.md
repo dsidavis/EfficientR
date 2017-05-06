@@ -12,7 +12,7 @@ This covers
 + creating R packages with C code
 
 
-HELP US HELP YOU
+# HELP US HELP YOU
 We'd love to see R code you care about that runs slowly (not as fast as you want)
 as a) we'd like to help, and b) we are working on making R smarter so that it runs
 code faster.  We'll help you and you'll help the entire R community.
