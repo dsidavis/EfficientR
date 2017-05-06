@@ -11,8 +11,11 @@ This covers
 + using C/C++ code, 
 + creating R packages with C code
 
+The step-by-step profiling and refining code is described in 
+ExampleCode
 
-# HELP US, HELP YOU, HELP the R Community
+
+# HELP US HELP YOU, HELP the R Community
 We'd love to see R code you care about that runs slowly (not as fast as you want)
 as a) we'd like to help, and b) we are working on making R smarter so that it runs
 code faster.  We'll help you and you'll help the entire R community.

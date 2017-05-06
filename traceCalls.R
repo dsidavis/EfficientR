@@ -17,9 +17,9 @@ function()
 
 
 genCallCollector =
-function()
+function(num = 1e6)
 {
-  ans = list()
+  ans = vector("list", num)
   function(var = as.character(deparse(sys.call(sys.nframe()-6)[[1]]))){
     i = which(names(ans) == var)
     if(length(i))
@@ -28,6 +28,28 @@ function()
       ans[[length(ans) + 1L]] <<- list(sys.calls())
       names(ans)[length(ans)] <<- var
     }
+  }
+}
+
+
+genCallCollector2 =
+function(size = 1e6)
+{
+  ctr = integer()
+  ans = list()
+  function(var = as.character(deparse(sys.call(sys.nframe() - 5)[[1]]))){
+
+    i = which(names(ans) == var)
+
+    if(length(i) == 0) {
+      ans[[length(ans) + 1L]] <<- vector("list", size)
+      names(ans)[length(ans)] <<- var
+      ctr[var] <<- 0L
+      i = length(ctr)
+    }
+    
+    ctr[i] <<- ctr[i] + 1L
+    ans[[i]][[ ctr[i] ]] <<- sys.calls()
   }
 }
 

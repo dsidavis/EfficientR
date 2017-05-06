@@ -186,14 +186,87 @@ Here is the output:
 So there are 5 places in the code.
 Unfortunately we can't see which functions these are in, or even if these functions are called.
 But we know %in% is in our code.
+match() is not in our code.
+And [[.data.frame is hard to tell as the R interpreter expands this from
+df$var and df[[position]].
 </p>
 <p>
-
-
-So now we don't know whether the time spent in match %in% 
-
-
+So now we don't know whether the time spent in match() is due to our calls to  %in% 
+(which we had to know %in% called match) or is due to other calls.
+We also don't know how many times match was called. If it is once, then this is a long
+time. If it it is 1 million times, then less of a bottleneck. However, we still want to reduce
+the time in match(). 
+match() is a function that comes in base R and is used a lot. It is pretty fast - implemented in C -
+so we are unlikely to make it faster.  However, it is also quite general which gives it its power
+and flexibility, but maybe this is overkill for our needs. We may be able to avoid some of the
+calls to match().
+First we need to find out a) how many calls there are, and b) where are they coming from,
+i.e. what functions are calling them.
+How many are coming from %in% in our code? from [[.data.frame? direct calls to match()?
 </p>
+
+<h2>Counting the Calls</h2>
+<p>
+We can look at the code and see how many references there are to %in%.
+But that doesn't tell us how often that line of code is actually evaluated/called.
+Also, we don't have any explicit/direct calls to match() so we can't directly count the number of 
+calls to match() in the code.
+More importantly, we want the number of actual calls, not the lines of code.
+We use trace() to monitor every call to a function.
+We pass trace() the function to be monitored and either
+a function or an unevaluated expression (a language object)
+to call each time that monitored function is called
+<pre>
+trace(match, aFunction, print = FALSE) 
+trace(match, expression, print = FALSE)
+</pre>
+In our case, we want to update a counter for the number of calls to match.
+<pre>
+matchCtr = 0
+trace(match, quote(matchCtr <<- matchCtr + 1), print = FALSE)
+</pre>
+(There is a nicer way to do this below.)
+Then we run the simulations again.
+<pre>
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+</pre>
+This is a little slower as we are executing this extra line of code in each call to match()
+and we are updating a global variable. But it isn't too bad.
+<p>
+Now we look at the value of matchCtr and see it is 708906.
+We should also have traced %in% and [[.data.frame.
+We can use a separate global variable for each of these, or we could use a vector for the tree of them and update the corresponding element.
+Rather than using a global variable, we'll use a closure.
+See the code in traceCalls.R, specifically genCounter().
+<pre>
+source('../traceCalls.R')
+matchCtr = genCounter()
+trace(match, matchCtr, print = FALSE)
+inCtr = genCounter()
+trace(match, `%in%`, print = FALSE)
+subDataFrame = genCounter()
+trace(match, `[[.data.frame`, print = FALSE)
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+</pre>
+</p>
+
+<h2>Finding What Calls What</h2>
+We want to find out what functions call match(), %in%, etc.
+<pre>
+source("../traceCalls.R")
+k = genCallCollector2()
+trace(match, k, print = FALSE)
+trace(`%in%`, k, print = FALSE)
+trace(`[[.data.frame`, k, print = FALSE)
+k = genCallCollector2()
+trace(match, quote(k("match")), print = FALSE)
+trace(`%in%`, quote(k("%in%")), print = FALSE)
+trace(`[[.data.frame`, quote(k("[[.data.frame")), print = FALSE)
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+</pre>
+
+<p>
+We can use the lineprof package to 
 
 <h2 id="Summary">Summary of Changes</h2>
 
@@ -206,7 +279,8 @@ So now we don't know whether the time spent in match %in%
 <li> Use vectorization as much as possible, including vectorization in parameters/arguments to functions such as <code>rbinom(n, sizeVector, probVector)</code>. This samples many distributions in one call.
 
 <li> Do computations once and pass results to functions/code that use them to avoid recomputing them.
-
+<li> Avoid unnecessary computations, e.g. do.call(rbind, x) when the elements of the list are
+  scalars and could have been collapsed into a vector directly with vapply.
 <li> In a function, don't assign a value to a variable and then in the next line return  the variable
 <pre>
  a = function(I, p){
