@@ -1,0 +1,97 @@
++ Nice spacing in the code (after , and around = )
+
++Indent code - se sigma_graph_fxn.
+
++Do you need to define the anonymous function in the lapply() in sigma_graph_fxn.
+ Can't test it independently of that function.
+ Does us df$commuting_prop, but that is global, not in the containing function (sigma_graph_fxn)
+
++foi_fxn
+  comp2_i == do.call(rbind, comp2_i)
+ Seems that comp2_i originally is all scalars so just sapply() or vapply() when calling comp2_i_fxn.
+  And indeed com2_i_fxn() returns sum
+
+  Doesn't appear to speed things up, but should slightly and 
+
++%in% can be expensive.
+  Consider fastmatch or environments(). Non-trivial to reason about this.
+
++Don't assign value to variable and then return it
+ a = function(I, p){
+    R = rbinom(n = 1, size = I, prob = p)
+    return(R)
+ }
+ Instead, just return the value directly.
+ Easier to read and marginally faster.
+
+ b = function(I, p) {
+      rbinom(n = 1, size = I, prob = p)
+    }
+
+ And remove the { } around the body.
+
+ Consider not using named arguments. Time the difference. See Comments file.
+
++ Don't use global variables. j_out
+  Makes code less robust, harder to understand, and also slower as R has to find the variable each time.
+  j_out in foi_fxn.  Especially confusing since name of parameter of another function called by that - l_ji_fxn
+
+
++Add a verbose = TRUE/FALSE argument and use cat() only when interactive session.
+
++Are 'vert_info', 'comp1_sub', 'comp2_sub' in vert_list in foi_fxn always in the same indeces.
+  Seem to be 1, 2, 3
+  But how often is this called?
+
+Same for comp2_i_fxn and l_ji_fxn 
+
++ Replace the df$S with df[[ index ]]
+   df$S does a match.
+  Use symbolic variables to preserve the name
+    S = 3L
+    df[[ S ]]
+
++ Pass vert_info$I and vert_info$name to comp2_i_fxn in the sapply()
+  Subset only once in foi_fxn, not each call to comp2_i_fxn
+
+In foi_fxn, no need to create data.frame for l_in_node
+ We use the two columns directly in the subsequent code
+
+In foi_fx,n  do.call(rbind, lapply() ) unnecessary when returning scalar.
+
+
+comp2_i_fxn - 
+ Use named subsetting rather than %in% and logical subsetting.
+ Replace 
+    I = vI[ vname %in% comp$name ]
+    df = I * comp$comp2_sub
+ with
+   df = vI[comp$name] * comp$comp2_sub
+  after putting names on vI.
+
+Same named subsetting approach for l_ji_fxn()
+  Get down to 12.48 seconds versus 21.40 - so 58%
+
+
+Consider sampling many values in call to rbinom(), i.e. vectorized in the p.
+   rbinom(100, c(5, 9), c(.5, 1))
+rather than 1 call to rbinom
+  This happens in each iteration of foi_fxn() at 
+     E = mapply(S_to_E, prev_TS$S, prev_TS$foi)
+  Do this for I and R also.
+
+  Down to 11.424 seconds, versus 21.873 - 52%
+
+
+
+
+Overall, on Linux  modified runs at 45% of the time of the original
+  user  system elapsed
+  7.750   0.013   7.768
+
+
+Original
+source("2016-08-17_simulation-fxns.r-orig")
+system.time({sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf)})
+   user  system elapsed
+ 17.232   0.003  17.248

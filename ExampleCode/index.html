@@ -1,0 +1,227 @@
+<html>
+
+<head>
+<title></title>
+<link rel="stylesheet" href="OmegaTech.css"></link>
+<style>
+</style>
+</head>
+
+
+<body>
+<p>
+The following is code written by Nistara Rhandawa to simulate  disease  propogation.
+The questions is very interesting and the context important. But for making the code
+faster, we can generally do this without knowing much about the code. Of course, it helps
+if you are familiar with what the code is attempting to do, how the functions are written, etc.
+And of course, often you are trying to make your own code more efficient, so you know these things.
+However, we can use the following general steps to make code more efficient.
+</p>
+
+<p>
+There are several files in the directory.
+The <a href="setup.r">setup.r</a> file creates all of the input objects that are needed in the simulation.
+The file <a href="simulation.r">simulation.r</a> runs the simulations.
+However, the only important command is 
+<pre>
+nsims = 2 
+nsteps = 1000
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+</pre>
+The functions that are used in the simulation (and the creation of the inputs also)
+are <a href="simulation-fxns.r-orig">simulation-fxns.r-orig</a>
+and the more efficient versions in
+<a href="simulation-fxns.r">simulation-fxns.r</a>.
+The file SessionState.rda contains all the inputs to the simulation and 
+allows us to avoid running createInputs.r which takes a minute or so.
+</p>
+<p>
+In short, we are interested in 
+making the functions in <a href="simulation-fxns.r">simulation-fxns.r</a>
+more efficient when we run 
+<pre>
+nsims = 2 
+nsteps = 1000
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+</pre>
+</p>
+<p>
+We could try to make the code in createInputs.r and the associated functions more efficient,
+but these are only run once. So it is not clear this is worth the effort.
+</p>
+
+<p>
+The results of changing the functions from 
+<a href="simulation-fxns.r-orig">simulation-fxns.r-orig</a>
+to <a href="simulation-fxns.r">simulation-fxns.r</a>
+change the run time of the simulations from 23.16 seconds to 12.0 seconds
+on an MacbookPro running OSX. We should report the version
+of R, the amount of RAM, what else was running and so on. These are important and often
+make a difference.  See sessionInfo() for just the R configuration.
+<pre>
+R Under development (unstable) (2016-06-30 r70858)
+Platform: x86_64-apple-darwin15.2.0 (64-bit)
+Running under: OS X El Capitan 10.11.6
+
+locale:
+[1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8
+
+attached base packages:
+[1] parallel  stats     graphics  grDevices datasets  utils    
+[7] methods   base     
+
+other attached packages:
+[1] igraph_1.0.1
+
+loaded via a namespace (and not attached):
+[1] magrittr_1.5
+</pre>
+</p>
+
+<p>
+If you want to skip to the punch line, you can compare the two files
+simulation-fxn.r-orig  and simulation-fxn.r and see the differences.
+Use the UNIX command diff, or source() them into separate R environments and compare manually or programmatically. See <a href="#Summary">below</a> for a summary of what we changed.
+</p>
+
+<h2>Step I: Profiling</h2>
+We start with the original functions in simulation-fxns.r-orig.  We started by adapting these
+functions to avoid any use of global variables and explicitly passing all of the input objects
+directly through the different functions. This actually saves a small amount of run-time as
+the R interpreter doesn't have to search along the R search() path for these variables.
+This is a very small amount of time in this case, but it is a general point.
+<pre>
+Never Use Global Variables!
+</pre>
+
+<p>
+So the simulation-fxns.r-orig are our initial baseline.
+We first time how long our 2 simulations take.
+<pre>
+source("simulations-fxns.r-orig")
+nsims = 2 
+nsteps = 1000
+system.time({sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)})
+   user  system elapsed 
+ 22.902   0.129  23.160 
+</pre>
+Of course, your time will be different and indeed, if I run this again, I will get a different time.
+We have to decide what it is a reasonable number of simulations and steps to get a reasonable
+estimate of how long the code takes.  And we want to see how the run time varies as we change
+the number of simulations and steps. Specifically we want to see if the code is linear, quadratic, ...
+</p>
+
+<p>
+Is 23 seconds fast enough?  If we want to run 1000 simulations with 1000 steps
+(based on power calculations, etc.), this would take about 3 hours.  
+If we are happy with this, we are done and don't need to improve our code.
+If we need to run 100,000 simulations (with 1000 steps), this will take about 319 hours or
+13 days. This is too long. So let's try to make this code more efficient.
+</p>
+
+<h2>Profiling</h2>
+<p>
+We start by profiling the code to find those functions which the code spends the most amount of time
+in.
+We use Rprof() for this
+<pre>
+Rprof("prof1")
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+Rprof(NULL)
+</pre>
+We now read the results of the profiling and see where the "offending" functions are:
+<pre>
+summaryRprof("prof1")$by.self
+                self.time self.pct total.time total.pct
+"match"             11.28    53.11      13.64     64.22
+"[[.data.frame"      1.58     7.44       5.06     23.82
+"%in%"               1.54     7.25      14.98     70.53
+"FUN"                1.42     6.69      21.24    100.00
+"rbinom"             1.00     4.71       1.00      4.71
+"<Anonymous>"        0.92     4.33       1.46      6.87
+"$.data.frame"       0.62     2.92       6.26     29.47
+"$"                  0.60     2.82       6.86     32.30
+"[["                 0.58     2.73       5.64     26.55
+"sys.call"           0.40     1.88       0.40      1.88
+"lapply"             0.28     1.32      21.24    100.00
+".subset2"           0.24     1.13       0.24      1.13
+"all"                0.24     1.13       0.24      1.13
+"names"              0.14     0.66       0.14      0.66
+"mapply"             0.10     0.47       0.44      2.07
+"cat"                0.10     0.47       0.10      0.47
+"sum"                0.06     0.28       0.06      0.28
+"*"                  0.04     0.19       0.04      0.19
+"is.matrix"          0.04     0.19       0.04      0.19
+"nargs"              0.04     0.19       0.04      0.19
+"as.data.frame"      0.02     0.09       0.02      0.09
+</pre>
+
+What does this tell us?
+The function match() is being called and this takes up over 50% of the overall time.
+The [[.data.frame is the mechanism used for <code>dataFrame[[ index ]]</code> and also 
+<code>dataFrame$varName</code>.
+And if you know how <code>dataFrame$varName</code> works (by looking at the $.data.frame
+function), it calls [[.data.frame and also possibly pmatch.
+Also, %in% is the third most expensive function. And again, with some knowledge, 
+%in% calls match(). So our time in match() <i>may</i> be due to %in%.
+We need to determine this.
+</p>
+<p>
+Does our simulation code call match()?  [[.data.frame?  %in%? 
+And what is FUN?
+</p>
+<p>
+We can search for these in our R code files, e.g., from the UNIX shell
+<pre>
+grep '%in%' simulation-fxns.r-orig
+</pre>
+Here is the output:
+<pre>
+        df = edges[ edges$from %in% from, ]
+    seed_row = which(df$name %in% nd)
+                vert_info$name %in% neigh_name ]
+    I = vert_info$I[ vert_info$name %in% comp$name ]
+    local_foi = l_in_node$l_in_node[ l_in_node$name %in% nodes ]
+</pre>
+So there are 5 places in the code.
+Unfortunately we can't see which functions these are in, or even if these functions are called.
+But we know %in% is in our code.
+</p>
+<p>
+
+
+So now we don't know whether the time spent in match %in% 
+
+
+</p>
+
+<h2 id="Summary">Summary of Changes</h2>
+
+<ul>
+
+<li>
+
+<li> Don't use global variables.
+<li> Use named subsetting <code>x[names]</code> rather than <code>names %in% table</code>
+<li> Use vectorization as much as possible, including vectorization in parameters/arguments to functions such as <code>rbinom(n, sizeVector, probVector)</code>. This samples many distributions in one call.
+
+<li> Do computations once and pass results to functions/code that use them to avoid recomputing them.
+
+<li> In a function, don't assign a value to a variable and then in the next line return  the variable
+<pre>
+ a = function(I, p){
+    R = rbinom(n = 1, size = I, prob = p)
+    return(R)
+ }
+</pre>
+versus
+<pre>
+ a = function(I, p){
+    rbinom(n = 1, size = I, prob = p)
+ }
+</pre>
+Shorter and avoids the overhead of assigning the variable (small cost but a cost).
+</ul>
+
+</body>
+</html>
