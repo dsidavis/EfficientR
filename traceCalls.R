@@ -37,7 +37,7 @@ function(size = 1e6)
 {
   ctr = integer()
   ans = list()
-  function(var = as.character(deparse(sys.call(sys.nframe() - 5)[[1]]))){
+  collect = function(var = as.character(deparse(sys.call(sys.nframe() - 5)[[1]]))){
 
     i = which(names(ans) == var)
 
@@ -51,6 +51,11 @@ function(size = 1e6)
     ctr[i] <<- ctr[i] + 1L
     ans[[i]][[ ctr[i] ]] <<- sys.calls()
   }
+
+  get = function()
+          lapply(ans, function(x) x[!sapply(x, is.null)])
+
+  list(collect = collect, ans = get)
 }
 
 
