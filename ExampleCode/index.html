@@ -255,19 +255,27 @@ We want to find out what functions call match(), %in%, etc.
 <pre>
 source("../traceCalls.R")
 k = genCallCollector2()
-trace(match, k, print = FALSE)
-trace(`%in%`, k, print = FALSE)
-trace(`[[.data.frame`, k, print = FALSE)
-k = genCallCollector2()
-trace(match, quote(k("match")), print = FALSE)
-trace(`%in%`, quote(k("%in%")), print = FALSE)
-trace(`[[.data.frame`, quote(k("[[.data.frame")), print = FALSE)
+col = k$collect
+trace(match, quote(col("match")), print = FALSE)
+trace(`%in%`, quote(col("%in%")), print = FALSE)
+trace(`[[.data.frame`, quote(col("[[.data.frame")), print = FALSE)
 sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+</pre>
+<p>
+After this code has run, we can collect the system calls for the three functions
+with the raw
+<pre>
+calls = environment(k)$ans
+</pre>
+
+<pre>
+foo = lapply(m, function(x) as.character(sapply(x, `[[`, 1)))
+bar = lapply(foo, function(x) paste(x[3:(length(x) - 5)], collapse = "->"))
 </pre>
 
 <p>
 We can use the lineprof package to 
-
+</p>
 <h2 id="Summary">Summary of Changes</h2>
 
 <ul>
