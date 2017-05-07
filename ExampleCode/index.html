@@ -1164,7 +1164,7 @@ function(comp, vI)
     return(df)
 }
 </pre>
-I prefer not to have the explicit return() but just return ans.
+I prefer not to have the explicit return() but just return the previous value, i.e. df in this case.
 And also, the assignment in the penultimate line is unnecessary. So this could  be simplified to 
 <pre>
 comp2_i_fxn =
