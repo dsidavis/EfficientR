@@ -1,0 +1,56 @@
+<doc>
+
+To get an undestanding of the code, we can see what functions call other functions
+<r:code>
+e = new.env()
+source("simulation-fxns.r-orig", e)
+library(codetools)
+funs = lapply(ls(e), function(f) findGlobals(get(f, e)))
+names(funs) = ls(e)
+</r:code>
+
+<r:code>
+g = matrix(FALSE, length(funs), length(funs), dimnames = list(names(funs), names(funs)))
+sapply(seq(along = funs), function(i) {
+               v = intersect(funs[[i]], names(funs))
+               g[i, v] <<- TRUE
+            })
+</r:code>
+
+<r:code>
+rowSums(g)
+<r:output>
+ add_sigmas_fxn       comp2_i_fxn     comp2_sub_fxn effective_pop_fxn   effective_pop_I  effective_pop_II            E_to_I           foi_fxn  get_vertInfo_fxn            I_to_R          j_in_fxn         j_out_fxn          l_ji_fxn net_neighbors_fxn       seed_nd_fxn 
+                0                 0                 0                 1                 1                 0                 0                 2                 0                 0                 1                 1                 0                 0                 0 
+  sigma_graph_fxn           sim_fxn    sim_lapply_fxn       sim_par_fxn sim_parlapply_fxn      start_TS_fxn            S_to_E 
+                0                 1                 4                 1                 4                 0                 0 
+</r:output>
+</r:code>
+
+The column sums shows how often a function is referenced by any other.
+
+
+
+<section>
+For the simulations, our top-level function is <r:function>sim_fxn</r:function>.
+We can find what functions in simulation-fxns.r-orig it calls, and what they call, etc.
+<r:code>
+ourFuns = ls(e)
+f = intersect(funs[["sim_fxn"]], ourFuns)
+</r:code>
+We can then do the same for these.
+So we write a function for this. This is in <file>whatCalls.R</file>.
+We can call it  as
+<r:code>
+tmp = whatCalls("sim_fxn", , funs,  TRUE)
+unlist(tmp)
+<r:output>
+[1] "sim_fxn"        "sim_lapply_fxn" "E_to_I"         "foi_fxn"        "comp2_i_fxn"    "l_ji_fxn"       "I_to_R"         "S_to_E"        
+</r:output>
+</r:code>
+This tells us that these are the functions we need to focus on.
+The graph above also shows these separations.
+</section>
+
+
+</doc>

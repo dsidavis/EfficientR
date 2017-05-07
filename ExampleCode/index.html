@@ -123,10 +123,10 @@ If we need to run 100,000 simulations (with 1000 steps), this will take about 31
 <p>
 We start by profiling the code to find those functions which the code spends the most amount of time
 in.
-We use Rprof() for this
+We use Rprof() for this (or lineprof which uses Rprof)
 <pre>
 Rprof("prof1")
-sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+tm.orig = system.time({sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)})
 Rprof(NULL)
 </pre>
 We now read the results of the profiling and see where the "offending" functions are:
@@ -255,10 +255,10 @@ We want to find out what functions call match(), %in%, etc.
 <pre>
 source("../traceCalls.R")
 k = genCallCollector2()
-col = k$collect
-trace(match, quote(col("match")), print = FALSE)
-trace(`%in%`, quote(col("%in%")), print = FALSE)
-trace(`[[.data.frame`, quote(col("[[.data.frame")), print = FALSE)
+kol = k$collect
+trace(match, quote(kol("match")), print = FALSE)
+trace(`%in%`, quote(kol("%in%")), print = FALSE)
+trace(`[[.data.frame`, quote(kol("[[.data.frame")), print = FALSE)
 sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
 </pre>
 <p>
@@ -272,6 +272,8 @@ We get the number of calls to these (as before)
 with
 <pre>
 sapply(calls, length)
+[[.data.frame          %in%         match
+       570316        708740        708906
 </pre>
 
 We'll focus on match() since this was the function that dominated the profiling.
@@ -636,26 +638,569 @@ Does this give us the same results?
 identical(l_in_node$l_in_node [ match(nodes, l_in_node$name) ],  l_in_node$l_in_node[l_in_node$name %in% nodes])
 </pre>
 Is this faster?
-
-
+<pre>
+system.time(replicate(10000, l_in_node$l_in_node [ match(nodes, l_in_node$name) ]))
+   user  system elapsed 
+  0.399   0.000   0.399 
+Browse[2]> system.time(replicate(10000, l_in_node$l_in_node[l_in_node$name %in% nodes]))
+   user  system elapsed 
+  1.020   0.000   1.021 
+</pre>
+So yes, a little over 2 times faster.
+<p>
+Another approach is, if the vector l_in_node$l_in_node had names corresponding to l_in_node$name, we could used named subsetting rather than %in%.
+<pre>
+tmp = l_in_node$l_in_node
+names(tmp) = l_in_node$name
+identical(tmp[ nodes ], l_in_node$l_in_node[l_in_node$name %in% nodes])
+</pre> 
+These are not identical.  The first has names and the second doesn't. So we want to use all.equal() instead. But the values are the same.
 
 <p>
-We can use the lineprof package to 
+How fast is named subsetting relative to the direct call to match().
+<pre>
+system.time(replicate(10000, tmp[nodes]))
+   user  system elapsed 
+  0.652   0.000   0.652 
+system.time(replicate(10000, l_in_node$l_in_node [ match(nodes, l_in_node$name) ]))
+   user  system elapsed 
+  0.839   0.000   0.840 
+system.time(replicate(10000, l_in_node$l_in_node[l_in_node$name %in% nodes]))
+   user  system elapsed 
+  1.207   0.000   1.208 
+</pre>
+Note that the timing for the match() approach doubled.  This indicates that something else may be happening on the machine and that are numbers
+aren't absolute.  This is why we need to compare two approaches at the same time, i.e. under hopefully the same situation.
+And we shoould repeat the entire measurement process for each multiple times to get the standard deviation.
+<p>
+Using names appears to be a little faster.
+One can argue that we have also eliminate the need to extract the l_in_node and name from the l_in_node object,
+i.e. <code>l_in_node$l_in_node [ match(nodes, l_in_node$name) ]</code>.  This is true and an issue.
+However, we can also change the structure of the top-level l_in_node not to be a data.frame but just a named numeric vector.
+If we do this in functions that call this function, then this avoids the need for l_in_node$l_in_node and l_in_node$name.
+So the timing comparisons would be valid.
+
+<p>
+Before we consider making any changes, let's examine other calls to l_ji_fxn. Perhaps they are quite different.
+We continue and each time l_ji_fxn is called, we query the length and class of nodes and l_in_node.
+Alternatively, we can trace this function and stop if these deviate from what we expect.
+<pre>
+undebug(l_ji_fxn)
+trace(l_ji_fxn, quote(if(! all(nodes %in% l_in_node$name )) stop("unexpected")), at = 4, print = FALSE)
+</pre>
+When we run our simulations,
+<pre>
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+</pre>
+we don't stop and our expectations are confirmed.
+
+<p>
+We could make the more extensive changes of using the named vector which involves changing at least two functions.
+We'll first use the explicit match(nodes, l_in_node$name) approach as this requires only changing l_ji_fxn.
+We define this modified function in <a href="l_ji_fxn_match.r">l_ji_fxn_match.r</a> and source it into our R session:
+<pre>
+source("l_ji_fxn_match.r")
+</pre>
+Let's profile our simulation again.
+<pre>
+Rprof("prof")
+tm.match = system.time(sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out))
+Rprof(NULL)
+</pre>
+The results are
+<pre>
+summaryRprof("prof")$by.self
+                self.time self.pct total.time total.pct
+"match"                5.98    42.47       8.10     57.53
+"[[.data.frame"        1.26     8.95       4.06     28.84
+"FUN"                  1.16     8.24      14.08    100.00
+"%in%"                 0.78     5.54       6.08     43.18
+"$.data.frame"         0.74     5.26       5.28     37.50
+"<Anonymous>"          0.74     5.26       1.22      8.66
+"$"                    0.70     4.97       5.98     42.47
+"lapply"               0.52     3.69      14.08    100.00
+"[["                   0.48     3.41       4.54     32.24
+"sys.call"             0.38     2.70       0.38      2.70
+"rbinom"               0.36     2.56       0.36      2.56
+".subset2"             0.18     1.28       0.18      1.28
+"all"                  0.14     0.99       0.14      0.99
+"is.matrix"            0.14     0.99       0.14      0.99
+"names"                0.14     0.99       0.14      0.99
+"do.call"              0.12     0.85       0.74      5.26
+"mapply"               0.08     0.57       0.32      2.27
+"nargs"                0.06     0.43       0.06      0.43
+"sum"                  0.06     0.43       0.06      0.43
+".row_names_info"      0.04     0.28       0.04      0.28
+"*"                    0.02     0.14       0.02      0.14
+</pre>
+
+The times are very different from our original profiling above as this was done on a faster machine with a different operating system (Linux). 
+However, the percentages are comparable across the two. And here match() takes 42% of the time in comparison with 53% previously.
+Note that these are samples so the results are subject to randonmess, but they are pretty stable.
+<p>
+The times for the original code and this small change to l_ji_fxn are very different with the original code being about 10% slower.
+<pre>
+tm.orig/tm.match
+    user   system  elapsed 
+1.097301 0.000000 1.097153 
+</pre>
+
+<p>
+Let's use named vectors to replace the l_in_node data frame with separate columns for the node names and values.
+We change l_ji_fxn() in the file l_ji_fxn_named_vector.r.
+What calls l_ji_fxn(). During our sleuthing to find what called %in%, we know 
+foi_fxn() calls l_ji_fxn(). Are there other functions that call l_ji_fxn()?
+We can search the code in a text editor.
+Alternatively, we can use the codetools package.
+We'll source the functions into a separate environment, find the functions and then
+query the functions they call with findGlobals()
+<pre>
+source("simulation-fxns.r-orig", e)
+e = new.env()
+library(codetools)
+funs = lapply(ls(e), function(f) findGlobals(get(f, e)))
+names(funs) = ls(e)
+</pre>
+Which of these refere to l_ji_fxn
+<pre>
+   add_sigmas_fxn       comp2_i_fxn     comp2_sub_fxn effective_pop_fxn 
+            FALSE             FALSE             FALSE             FALSE 
+  effective_pop_I  effective_pop_II            E_to_I           foi_fxn 
+            FALSE             FALSE             FALSE              TRUE 
+ get_vertInfo_fxn            I_to_R          j_in_fxn         j_out_fxn 
+            FALSE             FALSE             FALSE             FALSE 
+         l_ji_fxn net_neighbors_fxn       seed_nd_fxn   sigma_graph_fxn 
+            FALSE             FALSE             FALSE             FALSE 
+          sim_fxn    sim_lapply_fxn       sim_par_fxn sim_parlapply_fxn 
+            FALSE             FALSE             FALSE             FALSE 
+     start_TS_fxn            S_to_E 
+            FALSE             FALSE 
+</pre>
+So it is only foi_fxn().
+So we make a copy of this in l_ji_fxn_named_vector.r and modify it.
+The original version of this function creates the data.frame l_in_node with the code
+<pre>
+    l_in_node = data.frame(name = vert_info$name,
+                           l_in_node = l_in_node_val,
+                           stringsAsFactors = FALSE)
+</pre> 
+So we just change this to 
+<pre>
+ l_in_node = structure(l_in_node_val, names = vert_info$name)
+</pre>
+or
+<pre>
+l_in_node =  (vert_info$b_by_n * (comp1_i + comp2_i))/vert_info$sigma_by_tau_p1
+names(l_in_node) = vert_info$name
+</pre>
+
+We also have to change one other reference in that function from l_in_node$l_in_node to l_in_node
+<p>
+So let's source this file in to override the original function definitions and run our simulation again
+<pre>
+source("l_ji_fxn_named_vector.r")
+Rprof("prof")
+tm.named_vector = system.time(sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out))
+Rprof(NULL)
+</pre>
+Now the time goes to 10.7, compared to the original 15.3. (Again, we really should re-time both under the same circumstances.)
 </p>
+
+<p>
+<b>Before we get excited, we really need to check that the results are the same as the original!</b>
+
+<p>
+The profiling results below show the % of time match() is taking is decreasing. 
+<pre>
+summaryRprof("prof")$by.self
+                self.time self.pct total.time total.pct
+"match"              3.60    33.40       4.74     43.97
+"FUN"                2.84    26.35      10.76     99.81
+"%in%"               0.64     5.94       5.30     49.17
+"[[.data.frame"      0.60     5.57       2.12     19.67
+"[["                 0.58     5.38       2.70     25.05
+"$"                  0.56     5.19       3.48     32.28
+"rbinom"             0.34     3.15       0.34      3.15
+"<Anonymous>"        0.28     2.60       0.52      4.82
+"lapply"             0.26     2.41      10.76     99.81
+"$.data.frame"       0.22     2.04       2.92     27.09
+"sys.call"           0.18     1.67       0.18      1.67
+"names"              0.16     1.48       0.16      1.48
+".subset2"           0.10     0.93       0.10      0.93
+"mapply"             0.08     0.74       0.20      1.86
+"sum"                0.08     0.74       0.08      0.74
+"all"                0.06     0.56       0.06      0.56
+"is.matrix"          0.06     0.56       0.06      0.56
+"do.call"            0.04     0.37       0.70      6.49
+"nargs"              0.04     0.37       0.04      0.37
+"foi_fxn"            0.02     0.19       9.92     92.02
+"*"                  0.02     0.19       0.02      0.19
+"gc"                 0.02     0.19       0.02      0.19
+</pre>
+<p>
+Can we further reduce the time spent in match()?  
+We can use the same tools and approach as earlier to count the number of  calls to match
+and see where they are coming from (i.e.  the call stack).
+Alternatively, we can switch our focus to the next largest consumer of time - FUN.
+This is unfortunately named as it is the function argument to sapply()/lapply()/tapply()/mapply()/vapply().
+So there could be several functions whose times and percentages are combined together.
+
+
+<pre>
+k = genCallCollector2()
+kol = k$collect
+trace(match, quote(kol("match")), print = FALSE)
+trace(`%in%`, quote(kol("%in%")), print = FALSE)
+trace(`[[.data.frame`, quote(kol("[[.data.frame")), print = FALSE)
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+calls = k$ans()
+sapply(calls, length)
+[[.data.frame          %in%         match 
+       432778        502078        502132 
+</pre>
+So we have eliminated approximately 200K calls to match() (but we have replaced them with named subsetting but this is very fast and doesn't show up in the profiling.).
+
+<p>
+<pre>
+m = calls$match
+foo = lapply(m, function(x) as.character(sapply(x, `[[`, 1)))
+bar = sapply(foo, function(x) paste(x[1:(length(x) - 5)], collapse = "->"))
+                                                     sim_fxn->lapply->FUN->foi_fxn->structure->`$`->`$.data.frame`->`[[`->`[[.data.frame`->`%in%`->match 
+                                                                                                                                                      54 
+                                                                                                 sim_fxn->lapply->FUN->foi_fxn->structure->`%in%`->match 
+                                                                                                                                                      54 
+                                                                                                         sim_fxn->lapply->FUN->foi_fxn->structure->match 
+                                                                                                                                                      54 
+                                          sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.character->deparse->.deparseOpts->`%in%`->match 
+                                                                                                                                                      56 
+                                                        sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.character->deparse->`%in%`->match 
+                                                                                                                                                      56 
+            sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.character->deparse->`%in%`->match->mode->deparse->.deparseOpts->`%in%`->match 
+                                                                                                                                                      56 
+                          sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.character->deparse->`%in%`->match->mode->deparse->`%in%`->match 
+                                                                                                                                                      56 
+                                                                 sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.character->`%in%`->match 
+                                                                                                                                                      56 
+                              sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.numeric->force->paste->deparse->.deparseOpts->`%in%`->match 
+                                                                                                                                                      56 
+                                            sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.numeric->force->paste->deparse->`%in%`->match 
+                                                                                                                                                      56 
+sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.numeric->force->paste->deparse->`%in%`->match->mode->deparse->.deparseOpts->`%in%`->match 
+                                                                                                                                                      56 
+              sim_fxn->lapply->FUN->data.frame->as.data.frame->as.data.frame.numeric->force->paste->deparse->`%in%`->match->mode->deparse->`%in%`->match 
+                                                                                                                                                      56 
+                                                             sim_fxn->lapply->FUN->data.frame->`$`->`$.data.frame`->`[[`->`[[.data.frame`->`%in%`->match 
+                                                                                                                                                      56 
+                                                        sim_fxn->lapply->FUN->do.call->lapply->`$`->`$.data.frame`->`[[`->`[[.data.frame`->`%in%`->match 
+                                                                                                                                                     112 
+                                                                 sim_fxn->lapply->FUN->mapply->`$`->`$.data.frame`->`[[`->`[[.data.frame`->`%in%`->match 
+                                                                                                                                                     112 
+                                                                sim_fxn->lapply->FUN->foi_fxn->`$`->`$.data.frame`->`[[`->`[[.data.frame`->`%in%`->match 
+                                                                                                                                                     216 
+                                                                         sim_fxn->lapply->FUN->`$`->`$.data.frame`->`[[`->`[[.data.frame`->`%in%`->match 
+                                                                                                                                                     336 
+                                                                                               sim_fxn->lapply->FUN->foi_fxn->lapply->FUN->`%in%`->match 
+                                                                                                                                                   68742 
+                                    sim_fxn->lapply->FUN->foi_fxn->lapply->FUN->`%in%`->match->`$`->`$.data.frame`->`[[`->`[[.data.frame`->`%in%`->match 
+                                                                                                                                                  138024 
+                                                   sim_fxn->lapply->FUN->foi_fxn->lapply->FUN->`$`->`$.data.frame`->`[[`->`[[.data.frame`->`%in%`->match 
+                                                                                                                                                  293868 
+</pre>
+We still see direct calls to "%in%" in <code>sim_fxn->lapply->FUN->foi_fxn->lapply->FUN->`%in%`->match</code>.
+These come from the other call to lapply() in foi_fxn
+<pre>
+comp2_i = lapply(comp2_sub, comp2_i_fxn, vert_info)
+</pre>
+The function comp2_i_fxn is defined has
+<pre>
+function(comp, vert_info){
+    I = vert_info$I[ vert_info$name %in% comp$name ]
+    df = I * comp$comp2_sub
+    df = sum(df, na.rm = TRUE)
+    return(df)
+}
+</pre>
+and we see the %in% in the first line of the body.
+So we want to consider if we can do the same thing as we did with l_ji_fxn, i.e. use match() or named vectors.
+<b>How did we miss this in the first exploration of %in%</b>
+
+<p>
+Let's clean up after ourselves. There are a lot of large objects from the trace().
+<pre>
+sz = sapply(ls(), function(x) object.size(get(x, globalenv())))
+sort(sz)
+rm(m, k, kol, sims)
+
+</pre>
+
+<p>
+We'll debug the function foi_fxn() to understand the inputs to comp2_i_fxn().
+<pre>
+debug(foi_fxn)
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+ ...
+Browse[2]> class(vert_info)
+[1] "data.frame"
+Browse[2]> dim(vert_info)
+[1] 1273    6
+Browse[2]> names(vert_info)
+[1] "name"            "eff_pop"         "sigma_by_tau"    "b_by_n"         
+[5] "sigma_by_tau_p1" "I"              
+Browse[2]>  class(comp2_sub)
+[1] "list"
+Browse[2]> length(comp2_sub)
+[1] 1273
+Browse[2]> table(sapply(comp2_sub, class))
+data.frame 
+      1273 
+table(sapply(comp2_sub, ncol))
+   0    2 
+  10 1263 
+table(unlist(sapply(comp2_sub, names)))
+
+comp2_sub      name 
+     1263      1263 
+summary(unlist(sapply(comp2_sub, nrow)))
+   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+  0.000   2.000   3.000   4.239   5.000  59.000 
+</pre>
+comp2_sub is a list of data.frames, each with 2 columns, or none.
+
+<p>
+If we structure vert_info that is passed from foi_fxn() to each call to comp2_i_fxn, we may be able to use named matching.
+comp2_i_fxn() is defined as
+<pre>
+comp2_i_fxn = function(comp, vert_info){
+    I = vert_info$I[ vert_info$name %in% comp$name ]
+    df = I * comp$comp2_sub
+    df = sum(df, na.rm = TRUE)
+    return(df)
+}
+</pre>
+It only uses the I and name columns in the vert_info. So again, we can used a named numeric vector.
+We can change this to 
+<pre>
+comp2_i_fxn = function(comp, vI)
+{
+    df = vI[comp$name] * comp$comp2_sub
+    df = sum(df, na.rm = TRUE)
+    return(df)
+}
+</pre>
+So we change the lapply() in foi_fxn() to provide the necessary named vector.
+This change leads to the line
+<pre>
+comp2_i = lapply(comp2_sub, comp2_i_fxn, structure(vert_info$I, names = vert_info$name))
+</pre>
+We also probably do not need to create the I column in vert_info. There is overhead with that to ensure it has the same length as the other
+columns in the data.frame, etc.  <b>We need to remember to revisit this, although it probably is not a significant time sink at run-time.</b>
+<p>
+
+
+When we run the simulation with this new code, we see a long pause before the simulation progress bar appears.
+And when we look at the profiling information, gc() is the dominant function. This is garbage collection.
+This means that we have too many big objects in our work space.  It could be our code is generating large objects,
+but we haven't seen this earlier. Or did we when we saw an increase in the run-time.
+In these situations, we clear out the objects. But it can also be useful and preferable to restart the R session.
+So we'll do this.
+<pre>
+load("SessionState.rda")
+source("simulation-fxns.r-orig")
+source("l_ji_fxn_named_vector2.r")
+Rprof("prof")
+tm.named_vector2 = system.time(sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out))
+Rprof(NULL)
+</pre>
+The time is now down to 7.895 seconds - a non-trivial improvement from 10.7 seconds.
+
+<pre>
+summaryRprof("prof")$by.self
+                  self.time self.pct total.time total.pct
+"FUN"                  4.56    57.72       7.88     99.75
+"[[.data.frame"        0.64     8.10       1.94     24.56
+"match"                0.42     5.32       0.72      9.11
+"<Anonymous>"          0.40     5.06       0.64      8.10
+"rbinom"               0.30     3.80       0.30      3.80
+"$"                    0.24     3.04       2.52     31.90
+"sys.call"             0.22     2.78       0.22      2.78
+"[["                   0.20     2.53       2.14     27.09
+"$.data.frame"         0.14     1.77       2.28     28.86
+"%in%"                 0.12     1.52       0.84     10.63
+".subset2"             0.12     1.52       0.12      1.52
+"mapply"               0.10     1.27       0.28      3.54
+"lapply"               0.08     1.01       7.88     99.75
+"*"                    0.08     1.01       0.08      1.01
+"names"                0.08     1.01       0.08      1.01
+"do.call"              0.04     0.51       0.42      5.32
+"all"                  0.04     0.51       0.04      0.51
+"as.list.default"      0.04     0.51       0.04      0.51
+"sum"                  0.04     0.51       0.04      0.51
+"as.data.frame"        0.02     0.25       0.02      0.25
+"gc"                   0.02     0.25       0.02      0.25
+</pre>
+matc() is now down to 5%. 
+So now the big time sink is our own FUN in the calls to lapply().
+As we mentioned, a deficiency of the profiling  mechanism is we cannot immediately distinguish between how long each of these take.
+Before we focus on this, let's look at [[.data.frame.
+
+<p>
+These are related to direct calls of the form df[["varName"]], df[[index] and also df$varName.
+There are only 8 functions in our simulation - 
+and we know what each of these calls:
+<pre>
+e = new.env()
+source("simulation-fxns.r-orig", e)
+source("l_ji_fxn_named_vector2.r", e)
+library(codetools)
+funs = lapply(ls(e), function(f) findGlobals(get(f, e)))
+names(funs) = ls(e)
+tmp = whatCalls("sim_fxn", , funs,  TRUE)
+simFuns = unlist(tmp)
+funs[simFuns]
+</pre>
+<pre>
+w = sapply(funs[simFuns], function(x) c("$", "[[") %in% x)
+apply(w, 1, which)
+</pre>
+<pre>
+sim_lapply_fxn        foi_fxn    comp2_i_fxn       l_ji_fxn 
+             2              4              5              6 
+
+[[2]]
+foi_fxn 
+      4 
+</pre>
+
+
+We should find out how often these  8 functions are called.
+<pre>
+ctr = genCounter()
+for(i in simFuns) 
+  trace(i, substitute(ctr(i), list(i = i)), print = FALSE)
+</pre>
+
+<pre>
+sims = sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out)
+environment(ctr)$ans
+       sim_fxn sim_lapply_fxn         S_to_E         E_to_I         I_to_R        foi_fxn    comp2_i_fxn       l_ji_fxn 
+             1              2          71288          71288          71288             54          68742          68742 
+</pre>
+So for the $ function/operator, we want to loo at comp2_i_fxn and l_ji_fxn.
+For the [[ operator, there are only 54 calls to foi_fxn and so this is not a big issue.
+<p>
+
+
+
+<h2>Binomial Sampling</h2>
+In the most recent profiling, rbinom was identified as being a function that consumed some time, but small - about 4%.
+When we look at the functions that call rbinom(), these are S_to_E, E_to_I and I_to_R.
+If we look at these, we see that these all generate a single binomial value.
+We want to vectorize these. 
+These are called in sim_lapply_fxn.  We can check this with 
+<pre>
+g[, c("S_to_E", "E_to_I", "I_to_R")]
+</pre>
+where g is defined in WhatCallsWhat.xml
+
+<p>
+The calls to rbinom in sim_lapply_fxn are performed in each step of the simulation with
+<pre>
+E = mapply(S_to_E, prev_TS$S, prev_TS$foi)
+I = do.call(rbind, lapply(prev_TS$E, E_to_I, exit_latent))
+R = do.call(rbind, lapply(prev_TS$I, I_to_R, exit_inf))
+</pre>
+In all of these cases, we loop over each binomial size one at a time and generate a value.
+The probabilities are specified as second fixed argument. 
+If you know a lesser known property of the random generation functions, you will know that
+we can vectorize these calls rather than use m/sapply().
+In other words, rather than generating one value in each call, we can generate all values
+in a single call for each of the E, I, and R steps.
+Specifically, instead of 
+<pre>
+lapply(prev_TS$E, E_to_I, exit_latent)
+</pre>
+we can call 
+<pre>
+rbinom(length(prev_TS$E), prev_TS$E, exit_latent)
+</pre>
+This generates length(prev_TS$E) values and each one comes from a binomial 
+random variable with size = prev_TS$E[i] and probability exit_latent.
+
+<p>
+When both the size and the probabilities change per row/record, we can still use
+the vectorized version of rbinom. We simply specify vectors for size and probability.
+<p>
+So we can replace the code in sim_lapply_fxn
+<pre>
+ E = mapply(S_to_E, prev_TS$S, prev_TS$foi)
+ I = do.call(rbind, lapply(prev_TS$E, E_to_I, exit_latent))
+ R = do.call(rbind, lapply(prev_TS$I, I_to_R, exit_inf))
+</pre>
+with 
+<pre>
+ n = nrow(prev_TS)    
+ E = rbinom(n, prev_TS$S, prev_TS$foi)
+ I = rbinom(n, prev_TS$E, exit_latent)
+ R = rbinom(n, prev_TS$I, exit_inf)        
+</pre>
+You should verify that this gives the same statistical results. See rbinom.R for some suggestions as to how to do this.
+<p>
+Note that changing this code does mean we may not get identical results even when we set the seed.
+We may be changing the order in which we generate random numbers.
+
+<h2>Assignments and return()</h2>
+Several of the functions finish with 
+<pre>
+ans = foo(x, y)
+return(ans)
+</pre>
+For example, comp2_i_fxn
+<pre>
+comp2_i_fxn =
+function(comp, vI)
+{
+    df = vI[comp$name] * comp$comp2_sub
+    df = sum(df, na.rm = TRUE)
+    return(df)
+}
+</pre>
+I prefer not to have the explicit return() but just return ans.
+And also, the assignment in the penultimate line is unnecessary. So this could  be simplified to 
+<pre>
+comp2_i_fxn =
+function(comp, vI)
+{
+    df = vI[comp$name] * comp$comp2_sub
+    sum(df, na.rm = TRUE)
+ }
+</pre>
+
+We can find which functions have this idiom with 
+<pre>
+source("assignReturn.R")
+sapply(simFuns, isAssignReturn)
+       sim_fxn sim_lapply_fxn         E_to_I        foi_fxn    comp2_i_fxn       l_ji_fxn         I_to_R         S_to_E 
+          TRUE          FALSE           TRUE           TRUE           TRUE           TRUE           TRUE           TRUE 
+</pre>
+This is all but one - sim_lapply_fxn. This is a for loop and a cat() before the end. 
+
+
 <h2 id="Summary">Summary of Changes</h2>
 
 <ul>
 
 <li>
 
-<li> Don't use global variables.
-<li> Use named subsetting <code>x[names]</code> rather than <code>names %in% table</code>
+<li> Never use global variables.
+<li> Pick the best data structure, i.e. named numeric vector rather than a data.frame with names in one column and values in another. Don't default to a data.frame unless there is a good reason.  data.frame's are more expensive that simple lists (checking lengths, rownames are unique, ...).
+  So if you know the elements have the same length, you can avoid some overhead.
+<li> Use named subsetting <code>x[names]</code> or match() rather than <code>names %in% table</code> if the number of things to match is much smaller than the set of possible matches.
 <li> Use vectorization as much as possible, including vectorization in parameters/arguments to functions such as <code>rbinom(n, sizeVector, probVector)</code>. This samples many distributions in one call.
 
 <li> Do computations once and pass results to functions/code that use them to avoid recomputing them.
 <li> Avoid unnecessary computations, e.g. do.call(rbind, x) when the elements of the list are
   scalars and could have been collapsed into a vector directly with vapply.
-<li> In a function, don't assign a value to a variable and then in the next line return  the variable
+<li> In a function, don't assign a value to a variable and then in the next line return the variable
 <pre>
  a = function(I, p){
     R = rbinom(n = 1, size = I, prob = p)
