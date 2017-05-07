@@ -265,14 +265,13 @@ comp2_i_fxn = function(comp, vI)#, vname)
 
 ## calculate l_ji part
 ## -----------------------------------------------------------------------------
-#l_ji_fxn.indices = list()
-
-#l_ji_fxn.indices[[ length(l_ji_fxn.indices) + 1L]] <<- c(match(c("name", "sigmaProp_by_tau"), names(j_out)), match(c("name", "l_in_node"), names(l_in_node)))
+l_ji_fxn.indices = list()
 
 l_ji_fxn.timer = genAddTime(68742)
 
 l_ji_fxn = function(j_out, l_in_node, name){
 #    cur = Sys.time(); on.exit(l_ji_fxn.timer$addTime(cur))
+#l_ji_fxn.indices[[ length(l_ji_fxn.indices) + 1L]] <<- match(c("name", "sigmaProp_by_tau"), names(j_out))
     local_foi = l_in_node[ j_out$name ]
     df = j_out$sigmaProp_by_tau * local_foi
     sum(df, na.rm = TRUE)

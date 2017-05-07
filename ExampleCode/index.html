@@ -1072,7 +1072,7 @@ foi_fxn
 </pre>
 
 
-We should find out how often these  8 functions are called.
+We should find out how often these 8 functions are called.
 <pre>
 ctr = genCounter()
 for(i in simFuns) 
@@ -1085,9 +1085,120 @@ environment(ctr)$ans
        sim_fxn sim_lapply_fxn         S_to_E         E_to_I         I_to_R        foi_fxn    comp2_i_fxn       l_ji_fxn 
              1              2          71288          71288          71288             54          68742          68742 
 </pre>
-So for the $ function/operator, we want to loo at comp2_i_fxn and l_ji_fxn.
+So for the $ function/operator, we want to look at comp2_i_fxn and l_ji_fxn.
 For the [[ operator, there are only 54 calls to foi_fxn and so this is not a big issue.
 <p>
+
+When we subset by name, R needs to match that name to the names of the elements in the
+vector or list (or data.frame). 
+This happens each time; R doesn't remember where the element was from the previous time.
+Indeed, the position could change across calls.
+However, in our situation, in cmp2_i_fxn and l_ji_fxn, 
+the positions in comp and j_out of the elements don't change.
+In l_ji_fxn, we access <code>j_out$name</code>
+and <code>j_out$sigmaProp_by_tau</code>.
+We can examine the code that creates j_out and check if these are always in the same position.
+Alternatively, we can add temporary code to l_ji_fxn() to calculate the indices for these two elements
+and then check if they are always the same.
+We do this in simulation-fxns.r in a simple, inefficient manner
+with
+<pre>
+l_ji_fxn.indices = list()
+
+l_ji_fxn = function(j_out, l_in_node, name){
+l_ji_fxn.indices[[ length(l_ji_fxn.indices) + 1L]] <<- match(c("name", "sigmaProp_by_tau"), names(j_out))
+    local_foi = l_in_node[ j_out$name ]
+    df = j_out$sigmaProp_by_tau * local_foi
+    sum(df, na.rm = TRUE)
+}
+</pre>
+There are some calls ( 9180 of the 68742) in which j_out does not have these elements.
+Otherwise name is always in position 1 and sigmaProp_by_tau is always in position 2.
+Accordingly, we could change l_ji_fxn to use positions rather than names.
+Rather than using the numbers 1 and 2, we would use symbolic constants
+<code>j_out[[ NAME ]]</code> and <code>j_out[[ SIGMAPROP_BY_TAU ]]</code>
+for readability. However, using these symbolic constants is slightly less efficient than
+simple numbers. We either have to create these in each call and
+have R lookup these variables in the local call frame, or we create them once in the work space
+and R has to find them outside of the call frame.
+
+<p>
+If we use numbered indexing, we have an issue when the j_out data frame has no columns
+as happens in 9180 of the calls. 
+Indexing a list/data.frame by a number that does not correspond to a column raises an error.
+So we'd have to test for the number of columns being greater than 0.
+Alternatively, we might discard these degenerate data frames in foi_fxn or earlier when they are created.
+Since j_out is created before the simulations, we can easily discard these at that stage also.
+We have to determine whether this is compatible with the overall computations.
+
+
+<h2>Timing the FUNs</h2>
+Since the profiler does not distinguish between the different FUNs in the the call to s/lapply(),
+we need to time the functions explicitly.
+For each of the comp2_i_fxn and l_ji_fxn functions, 
+at the start of each call we compute the current time and
+when we fininsh that call to the function, we take the difference
+between the start time and the current time and store it in a vector.
+We can use genAddTime() to create a closure to store the run-times.
+We add commands  such as 
+<pre>
+  cur = Sys.time(); on.exit(l_ji_fxn.timer$addTime(cur))
+</pre>
+at the start of each of the functions.
+The on.exit() adds code that gets called when the function call ends, regardless of whether there is an error or not
+or which return() call terminates the function call.
+
+<p>
+In time_funs.r, we add the code to comp2_i_fxn and l_ji_fxn since these are the two functions called by the s/lapply() functions.
+<pre>
+source("time_funs.r")
+nsims = 2
+nsteps = 1000
+tm.timer = system.time(sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out))
+</pre>
+We can then look at the individual and total times in each of the two functions
+<pre>
+sum(comp2_i_fxn.timer$times())
+[1] 5.365174
+> sum(l_ji_fxn.timer$times())
+[1] 5.033893
+</pre>
+So both of these take approximately the same amount of time.
+
+<h2>lapply() and do.call(rbind, )</h2>
+Some of the functions use the idiom of
+calling lapply() and then do.call(rbind, ans).
+For example, in foi_fxn, we have
+<pre>
+ comp2_i = lapply(comp2_sub, comp2_i_fxn, vert_info)
+ comp2_i = do.call(rbind, comp2_i)
+</pre>
+However, comp2_i_fxn returns the sum of a numeric vector. This is a scalar.
+So there is no need to call rbind. Instead, we can call unlist.
+But even better, we can change the lapply() to sapply(), or even better 
+vapply().
+So we change the two lines above to 
+<pre>
+comp2_i = vapply(comp2_sub, comp2_i_fxn, 0, vert_info)
+</pre>
+<p>
+This also happens in the call to l_ji_fxn which also returns the sum() of a numeric vector.
+<p>
+The updated code is in <a href="simulation-fxns.r-orig">simulation-fxns.r-orig</a>.
+
+<p>
+We time this with
+<pre>
+load("SessionState.rda")
+source("simulation-fxns.r-orig")
+source("do_call_rbind.r")
+nsims = 2
+nsteps = 1000
+tm.rbind = system.time(sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out))
+</pre>
+
+Since there are only 54 calls to foi_fxn, this change doesn't have a big impact.
+It does simplify the code.
 
 
 
@@ -1183,6 +1294,22 @@ sapply(simFuns, isAssignReturn)
           TRUE          FALSE           TRUE           TRUE           TRUE           TRUE           TRUE           TRUE 
 </pre>
 This is all but one - sim_lapply_fxn. This is a for loop and a cat() before the end. 
+
+
+<h2>simulation-fxns.r</h2>
+We have put all the changes in
+simulation-fxns.r
+<pre>
+load("SessionState.rda")
+source("simulation-fxns.r")
+nsims = 2; nsteps = 1000
+Rprof("prof")
+tm.all = system.time(sim_fxn(nsims, nsteps, start_TS, vert_list, exit_latent, exit_inf, j_out))
+Rprof(NULL)
+</pre>
+This gets us to 7.48 seconds.
+
+
 
 
 <h2 id="Summary">Summary of Changes</h2>
